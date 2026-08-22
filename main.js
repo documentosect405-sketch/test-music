@@ -1,377 +1,119 @@
 /**
  * Ultimate Music Bot 
- * Comprehensive Discord Bot
- * 
- * @fileoverview Core application
- * @version 1.0.0
- * @author GlaceYT
+ * Core application (LIMPIO)
  */
 
-const DiscordClientFramework = require('discord.js').Client;
-const DiscordGatewayIntentBitsRegistry = require('discord.js').GatewayIntentBits;
-const DiscordCollectionFramework = require('discord.js').Collection;
-const RiffyAudioProcessingFramework = require('riffy').Riffy;
-const FileSystemOperationalInterface = require('fs');
-const SystemPathResolutionUtility = require('path');
-const SystemConfigurationManager = require('./config');
-const DatabaseConnectionEstablishmentService = require('./database/connection');
-const AudioPlayerManagementHandler = require('./utils/player');
-const ApplicationStatusManagementService = require('./utils/statusManager');
-const MemoryGarbageCollectionOptimizer = require('./utils/garbageCollector');
-const EnvironmentVariableConfigurationLoader = require('dotenv');
-const shiva = require('./shiva');
-// Initialize environment variable configuration subsystem
-EnvironmentVariableConfigurationLoader.config();
+const { Client, GatewayIntentBits, Collection } = require('discord.js');
+const { Riffy } = require('riffy');
+const fs = require('fs');
+const path = require('path');
+const config = require('./config');
+const connectDB = require('./database/connection');
+const PlayerHandler = require('./utils/player');
+const StatusManager = require('./utils/statusManager');
+const GarbageCollector = require('./utils/garbageCollector');
+require('dotenv').config();
 
-/**
- * Discord Client Runtime Management System
- * Implements comprehensive client lifecycle management with advanced intent configuration
- */
-class DiscordClientRuntimeManager {
+class Bot {
     constructor() {
-        this.initializeClientConfiguration();
-        this.initializeRuntimeSubsystems();
-        this.initializeAudioProcessingInfrastructure();
-        this.initializeApplicationBootstrapProcedures();
-    }
-    
-    /**
-     * Initialize primary Discord client
-     * Implements comprehensive gateway intent management for optimal resource utilization
-     */
-    initializeClientConfiguration() {
-        this.clientRuntimeInstance = new DiscordClientFramework({
+        this.client = new Client({
             intents: [
-                DiscordGatewayIntentBitsRegistry.Guilds,
-                DiscordGatewayIntentBitsRegistry.GuildMessages,
-                DiscordGatewayIntentBitsRegistry.GuildVoiceStates,
-                DiscordGatewayIntentBitsRegistry.GuildMessageReactions,
-                DiscordGatewayIntentBitsRegistry.MessageContent,
-                DiscordGatewayIntentBitsRegistry.DirectMessages,
-                DiscordGatewayIntentBitsRegistry.GuildPresences
+                GatewayIntentBits.Guilds,
+                GatewayIntentBits.GuildMessages,
+                GatewayIntentBits.GuildVoiceStates,
+                GatewayIntentBits.MessageContent
             ]
         });
-        
-        // Initialize command collection management subsystems
-        this.clientRuntimeInstance.commands = new DiscordCollectionFramework();
-        this.clientRuntimeInstance.slashCommands = new DiscordCollectionFramework();
-        this.clientRuntimeInstance.mentionCommands = new DiscordCollectionFramework();
+
+        this.client.commands = new Collection();
+        this.client.slashCommands = new Collection();
+
+        this.client.statusManager = new StatusManager(this.client);
+        this.client.playerHandler = new PlayerHandler(this.client);
+
+        this.initRiffy();
     }
-    
-    /**
-     * Initialize core runtime subsystem managers with dependency injection pattern
-     * Ensures proper initialization order for optimal system performance
-     */
-    initializeRuntimeSubsystems() {
-        // Dependency injection pattern for status management subsystem
-        this.statusManagementSubsystem = new ApplicationStatusManagementService(this.clientRuntimeInstance);
-        this.clientRuntimeInstance.statusManager = this.statusManagementSubsystem;
-        
-        // Dependency injection pattern for audio player management subsystem  
-        this.audioPlayerManagementSubsystem = new AudioPlayerManagementHandler(this.clientRuntimeInstance);
-        this.clientRuntimeInstance.playerHandler = this.audioPlayerManagementSubsystem;
-    }
-    
-    /**
-     * Initialize advanced audio processing infrastructure with Riffy framework integration
-     * Implements Lavalink node configuration and management
-     */
-    initializeAudioProcessingInfrastructure() {
-        const audioNodeConfigurationRegistry = this.constructAudioNodeConfiguration();
-        
-        this.audioProcessingRuntimeInstance = new RiffyAudioProcessingFramework(
-            this.clientRuntimeInstance, 
-            audioNodeConfigurationRegistry, 
+
+    initRiffy() {
+        this.client.riffy = new Riffy(this.client, [
             {
-                send: (audioPayloadTransmissionData) => {
-                    const guildContextResolution = this.clientRuntimeInstance.guilds.cache
-                        .get(audioPayloadTransmissionData.d.guild_id);
-                    if (guildContextResolution) {
-                        guildContextResolution.shard.send(audioPayloadTransmissionData);
-                    }
-                },
-                defaultSearchPlatform: "ytmsearch",
-                restVersion: "v4"
+                host: config.lavalink.host,
+                password: config.lavalink.password,
+                port: config.lavalink.port,
+                secure: config.lavalink.secure
             }
-        );
-        
-        this.clientRuntimeInstance.riffy = this.audioProcessingRuntimeInstance;
-    }
-    
-    /**
-     * Construct audio node configuration from system configuration
-     * Implements secure credential management and connection parameter optimization
-     */
-    constructAudioNodeConfiguration() {
-        const systemConfiguration = SystemConfigurationManager;
-        
-        return [
-            {
-                host: systemConfiguration.lavalink.host,
-                password: systemConfiguration.lavalink.password,
-                port: systemConfiguration.lavalink.port,
-                secure: systemConfiguration.lavalink.secure
+        ], {
+            send: (payload) => {
+                const guild = this.client.guilds.cache.get(payload.d.guild_id);
+                if (guild) guild.shard.send(payload);
             }
-        ];
+        });
+
+        this.client.on('raw', (d) => {
+            if (['VOICE_STATE_UPDATE', 'VOICE_SERVER_UPDATE'].includes(d.t)) {
+                this.client.riffy.updateVoiceState(d);
+            }
+        });
     }
-    
-    /**
-     * Initialize comprehensive application bootstrap procedures
-     * Orchestrates system initialization sequence with error handling and logging
-     */
-    initializeApplicationBootstrapProcedures() {
-        this.applicationBootstrapOrchestrator = new ApplicationBootstrapOrchestrator(
-            this.clientRuntimeInstance
-        );
-    }
-    
-    /**
-     * Execute complete application runtime initialization sequence
-     * Implements error handling and graceful degradation patterns
-     */
-    async executeApplicationBootstrap() {
+
+    async start() {
         try {
-            await this.applicationBootstrapOrchestrator.executeDatabaseConnectionEstablishment();
-            await this.applicationBootstrapOrchestrator.executeCommandDiscoveryAndRegistration();
-            await this.applicationBootstrapOrchestrator.executeEventHandlerRegistration();
-            await this.applicationBootstrapOrchestrator.executeMemoryOptimizationInitialization();
-            await this.applicationBootstrapOrchestrator.executeAudioSubsystemInitialization();
-            await this.applicationBootstrapOrchestrator.executeClientAuthenticationProcedure();
-            
-        } catch (applicationBootstrapException) {
-            this.handleApplicationBootstrapFailure(applicationBootstrapException);
+            await connectDB();
+            console.log('✅ MongoDB conectado');
+
+            this.loadCommands();
+            this.loadEvents();
+
+            GarbageCollector.init();
+
+            this.client.playerHandler.initializeEvents();
+
+            await this.client.login(process.env.TOKEN);
+        } catch (err) {
+            console.error('❌ Error al iniciar:', err);
+            process.exit(1);
         }
     }
-    
-    /**
-     * Handle application bootstrap failure with comprehensive error reporting
-     */
-    handleApplicationBootstrapFailure(exceptionInstance) {
-        console.error('❌ Failed to initialize bot:', exceptionInstance);
-        process.exit(1);
-    }
-}
 
-/**
- * Application Bootstrap Orchestration Service
- * Manages complex initialization sequences with advanced error handling
- */
-class ApplicationBootstrapOrchestrator {
-    constructor(clientRuntimeInstance) {
-        this.clientRuntimeInstance = clientRuntimeInstance;
-        this.commandDiscoveryEngine = new CommandDiscoveryEngine();
-        this.eventHandlerRegistrationService = new EventHandlerRegistrationService();
-        this.audioSubsystemIntegrationManager = new AudioSubsystemIntegrationManager(clientRuntimeInstance);
-    }
-    
-    /**
-     * Execute database connection establishment with connection pooling
-     */
-    async executeDatabaseConnectionEstablishment() {
-        await DatabaseConnectionEstablishmentService();
-        console.log('✅ MongoDB connected successfully');
-    }
-    
-    /**
-     * Execute comprehensive command discovery and registration procedures
-     */
-    async executeCommandDiscoveryAndRegistration() {
-        const commandRegistrationResults = await this.commandDiscoveryEngine
-            .executeMessageCommandDiscovery(this.clientRuntimeInstance)
-            .executeSlashCommandDiscovery(this.clientRuntimeInstance);
-        
-        console.log(`✅ Loaded ${commandRegistrationResults.totalCommands} commands`);
-    }
-    
-    /**
-     * Execute event handler registration with advanced event binding
-     */
-    async executeEventHandlerRegistration() {
-        const eventRegistrationResults = await this.eventHandlerRegistrationService
-            .executeEventDiscovery()
-            .bindEventHandlers(this.clientRuntimeInstance);
-        
-        console.log(`✅ Loaded ${eventRegistrationResults.totalEvents} events`);
-    }
-    
-    /**
-     * Execute memory optimization subsystem initialization
-     */
-    async executeMemoryOptimizationInitialization() {
-        MemoryGarbageCollectionOptimizer.init();
-    }
-    
-    /**
-     * Execute audio processing subsystem initialization with event binding
-     */
-    async executeAudioSubsystemInitialization() {
-        this.clientRuntimeInstance.playerHandler.initializeEvents();
-        //console.log('🎵 Player events initialized');
-    }
-    
-    /**
-     * Execute Discord client authentication and connectivity establishment
-     */
-    async executeClientAuthenticationProcedure() {
-        const authenticationCredential = SystemConfigurationManager.discord.token || 
-                                       process.env.TOKEN;
-        
-        await this.clientRuntimeInstance.login(authenticationCredential);
-    }
-}
+    loadCommands() {
+        const msgPath = path.join(__dirname, 'commands', 'message');
+        const slashPath = path.join(__dirname, 'commands', 'slash');
 
-/**
- * Command Discovery and Registration Engine
- * Implements advanced filesystem scanning and module resolution
- */
-class CommandDiscoveryEngine {
-    constructor() {
-        this.discoveredMessageCommands = 0;
-        this.discoveredSlashCommands = 0;
-    }
-    
-    /**
-     * Execute message command discovery with filesystem traversal
-     */
-    executeMessageCommandDiscovery(clientInstance) {
-        const messageCommandDirectoryPath = SystemPathResolutionUtility.join(__dirname, 'commands', 'message');
-        
-        if (FileSystemOperationalInterface.existsSync(messageCommandDirectoryPath)) {
-            const discoveredCommandFiles = FileSystemOperationalInterface
-                .readdirSync(messageCommandDirectoryPath)
-                .filter(fileEntity => fileEntity.endsWith('.js'));
-            
-            for (const commandFile of discoveredCommandFiles) {
-                const commandModuleInstance = require(SystemPathResolutionUtility.join(messageCommandDirectoryPath, commandFile));
-                clientInstance.commands.set(commandModuleInstance.name, commandModuleInstance);
-                this.discoveredMessageCommands++;
-            }
+        if (fs.existsSync(msgPath)) {
+            fs.readdirSync(msgPath).forEach(file => {
+                const cmd = require(path.join(msgPath, file));
+                this.client.commands.set(cmd.name, cmd);
+            });
         }
-        
-        return this;
-    }
-    
-    /**
-     * Execute slash command discovery with advanced module resolution
-     */
-    executeSlashCommandDiscovery(clientInstance) {
-        const slashCommandDirectoryPath = SystemPathResolutionUtility.join(__dirname, 'commands', 'slash');
-        
-        if (FileSystemOperationalInterface.existsSync(slashCommandDirectoryPath)) {
-            const discoveredCommandFiles = FileSystemOperationalInterface
-                .readdirSync(slashCommandDirectoryPath)
-                .filter(fileEntity => fileEntity.endsWith('.js'));
-            
-            for (const commandFile of discoveredCommandFiles) {
-                const commandModuleInstance = require(SystemPathResolutionUtility.join(slashCommandDirectoryPath, commandFile));
-                clientInstance.slashCommands.set(commandModuleInstance.data.name, commandModuleInstance);
-                this.discoveredSlashCommands++;
-            }
-        }
-        
-        return {
-            totalCommands: this.discoveredMessageCommands + this.discoveredSlashCommands
-        };
-    }
-}
 
-/**
- * Event Handler Registration Service
- * Manages advanced event binding with lifecycle management
- */
-class EventHandlerRegistrationService {
-    constructor() {
-        this.discoveredEventHandlers = [];
-        this.boundEventHandlers = 0;
+        if (fs.existsSync(slashPath)) {
+            fs.readdirSync(slashPath).forEach(file => {
+                const cmd = require(path.join(slashPath, file));
+                this.client.slashCommands.set(cmd.data.name, cmd);
+            });
+        }
+
+        console.log(`✅ Comandos cargados: ${this.client.commands.size + this.client.slashCommands.size}`);
     }
-    
-    /**
-     * Execute event handler discovery with filesystem traversal
-     */
-    executeEventDiscovery() {
-        const eventHandlerDirectoryPath = SystemPathResolutionUtility.join(__dirname, 'events');
-        const discoveredEventFiles = FileSystemOperationalInterface
-            .readdirSync(eventHandlerDirectoryPath)
-            .filter(fileEntity => fileEntity.endsWith('.js'));
-        
-        this.discoveredEventHandlers = discoveredEventFiles.map(eventFile => {
-            return require(SystemPathResolutionUtility.join(eventHandlerDirectoryPath, eventFile));
-        });
-        
-        return this;
-    }
-    
-    /**
-     * Bind discovered event handlers with advanced lifecycle management
-     */
-    bindEventHandlers(clientInstance) {
-        for (const eventHandlerInstance of this.discoveredEventHandlers) {
-            if (eventHandlerInstance.once) {
-                clientInstance.once(eventHandlerInstance.name, (...eventArguments) => 
-                    eventHandlerInstance.execute(...eventArguments, clientInstance));
+
+    loadEvents() {
+        const eventsPath = path.join(__dirname, 'events');
+
+        fs.readdirSync(eventsPath).forEach(file => {
+            const event = require(path.join(eventsPath, file));
+
+            if (event.once) {
+                this.client.once(event.name, (...args) => event.execute(...args, this.client));
             } else {
-                clientInstance.on(eventHandlerInstance.name, (...eventArguments) => 
-                    eventHandlerInstance.execute(...eventArguments, clientInstance));
+                this.client.on(event.name, (...args) => event.execute(...args, this.client));
             }
-            this.boundEventHandlers++;
-        }
-        
-        return {
-            totalEvents: this.boundEventHandlers
-        };
+        });
+
+        console.log('✅ Eventos cargados');
     }
 }
 
-/**
- * Audio Subsystem Integration Manager
- * Manages Riffy framework integration with advanced event handling
- */
-class AudioSubsystemIntegrationManager {
-    constructor(clientInstance) {
-        this.clientRuntimeInstance = clientInstance;
-        this.initializeAudioEventHandlers();
-    }
-    
-    /**
-     * Initialize comprehensive audio event handling subsystem
-     */
-    initializeAudioEventHandlers() {
-        this.clientRuntimeInstance.on('raw', (gatewayEventPayload) => {
-            this.processGatewayVoiceStateEvent(gatewayEventPayload);
-        });
-        
-        this.bindRiffyEventHandlers();
-    }
-    
-    /**
-     * Process Discord gateway voice state events with validation
-     */
-    processGatewayVoiceStateEvent(eventPayload) {
-        const validVoiceStateEvents = ['VOICE_STATE_UPDATE', 'VOICE_SERVER_UPDATE'];
-        
-        if (!validVoiceStateEvents.includes(eventPayload.t)) return;
-        
-        this.clientRuntimeInstance.riffy.updateVoiceState(eventPayload);
-    }
-    
-    /**
-     * Bind Riffy framework event handlers with comprehensive logging
-     */
-    bindRiffyEventHandlers() {
-        this.clientRuntimeInstance.riffy.on('nodeConnect', (audioNodeInstance) => {
-            console.log(`🎵 Lavalink node "${audioNodeInstance.name}" connected`);
-        });
-        
-        this.clientRuntimeInstance.riffy.on('nodeError', (audioNodeInstance, nodeErrorException) => {
-            console.error(`🔴 Lavalink node "${audioNodeInstance.name}" error:`, nodeErrorException.message);
-        });
-    }
-}
+const bot = new Bot();
+bot.start();
 
-
-const enterpriseApplicationManager = new DiscordClientRuntimeManager();
-enterpriseApplicationManager.executeApplicationBootstrap();
-
-
-module.exports = enterpriseApplicationManager.clientRuntimeInstance;
-shiva.initialize(enterpriseApplicationManager.clientRuntimeInstance);
+module.exports = bot.client;
